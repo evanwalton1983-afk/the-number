@@ -1,0 +1,16 @@
+{
+  "name": "The Number",
+  "short_name": "The Number",
+  "description": "Prices at your sportsbooks against the sharp fair price: edges, a line shop, boost and bonus bet math, and closing line value.",
+  "start_url": "/#edges",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#eceee8",
+  "theme_color": "#eceee8",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
