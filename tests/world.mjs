@@ -93,6 +93,17 @@ export function oddsWorld(now = Date.now()) {
       book('betmgm', 'BetMGM', [sp('Los Angeles Lakers', -2.5, -110, 'Golden State Warriors', -110)], 3),
       book('espnbet', 'theScore Bet', [sp('Los Angeles Lakers', -3, -110, 'Golden State Warriors', -110)], 2),
     ]),
+    // Two arbs, fresh prices, same line at two books (no Pinnacle, so no fair price and no edge).
+    // Pistons: over +110 against under -105, 1.18% ROI. Hawks: +106 against -105, 0.24% ROI, thin
+    // enough that whole dollar stakes at 200 leave a small loss.
+    ev('nba3', 'basketball_nba', 'Detroit Pistons', 'Chicago Bulls', 9, [
+      book('draftkings', 'DraftKings', [tot(228.5, 110, -130)], 2),
+      book('fanduel', 'FanDuel', [tot(228.5, -130, -105)], 2),
+    ]),
+    ev('nba4', 'basketball_nba', 'Atlanta Hawks', 'Miami Heat', 10, [
+      book('betmgm', 'BetMGM', [tot(231.5, 106, -130)], 2),
+      book('betrivers', 'BetRivers', [tot(231.5, -130, -105)], 2),
+    ]),
   ];
 
   const ufc = [
