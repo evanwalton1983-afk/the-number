@@ -1,6 +1,6 @@
 // The Number's service worker: keeps the app shell available offline and shows alerts.
 // Prices (/api/*) always go to the network.
-const VERSION = 'number-0af11be0db';
+const VERSION = 'number-8d6848a2bd';
 const SHELL = ['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png', '/fonts/archivo-wdth.woff2'];
 
 self.addEventListener('install', (e) => {

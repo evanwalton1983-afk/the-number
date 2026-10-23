@@ -149,6 +149,36 @@ try {
   check(leg.team === 'Buffalo Bills' && leg.opponent === 'Miami Dolphins' && leg.line === -2.5 && leg.odds === -120 && payload.bets[0].stake === 14, 'the Sweat code carries team, line, price and stake');
   await page.click('.sheet [data-action="close"]');
 
+  // Arbs tab: the scripted Pistons total is +110 at DraftKings against -105 at FanDuel.
+  await page.click('[data-tab="arbs"]');
+  check(/Middles 1/.test(await page.innerText('[data-action="arb-mode"][data-mode="middles"]')), 'the Arbs tab finds the one scripted middle');
+  await page.click('[data-action="arb-mode"][data-mode="arbs"]');
+  await page.fill('[data-bind="arb.total"]', '200');
+  await page.waitForSelector('.row.edge');
+  check((await page.locator('.row.edge').count()) === 1, 'one arb at the default minimum (the thin one is under it)');
+  const arb = (await page.locator('.row.edge').first().innerText()).replace(/\s+/g, ' ');
+  check(/\+1\.18%/.test(arb) && /Pistons|Bulls/.test(arb), `the arb reads +1.18% ROI (${arb})`);
+  check(/\$96 and \$104/.test(arb), 'a 200 total splits into whole dollar stakes of 96 and 104');
+  check(/Guaranteed profit \+\$1\.60/.test(arb) && !/2\.35/.test(arb), 'the profit shown is the guaranteed minimum, 1.60, not the ideal 2.35');
+  check(/DraftKings/.test(arb) && /FanDuel/.test(arb) && /\+110/.test(arb) && /-105/.test(arb) && /2 min old/.test(arb), 'both legs show book, price and age');
+  await shot('04-arbs');
+  await page.click('[data-tab="settings"]');
+  await page.click('[data-action="set"][data-key="minMidEv"][data-v="0"]');
+  await page.click('[data-tab="arbs"]');
+  await page.waitForFunction(() => document.querySelectorAll('.row.edge').length >= 2).catch(() => {});
+  const rows = await texts('.row.edge');
+  check(rows.length === 3, `with the minimum at $0 the two thin arbs appear too (${rows.length})`);
+  const flat = rows.map((r) => r.replace(/\s+/g, ' '));
+  check(/Pistons|Bulls/.test(flat[0]) && !/no guaranteed profit/.test(flat[0]), 'the healthy arb stays first and unflagged');
+  const hawks = flat.find((r) => /Hawks|Heat/.test(r)) || '';
+  check(/\$97 and \$103/.test(hawks) && /Guaranteed profit -\$0\.18/.test(hawks) && /no guaranteed profit/.test(hawks), `a thin arb that rounds to a loss is flagged with the loss (${hawks})`);
+  const bravo = flat.find((r) => /Bravo/.test(r)) || '';
+  check(/\$120 and \$80/.test(bravo) && /Guaranteed profit \$0 /.test(bravo) && /no guaranteed profit/.test(bravo), `a thin arb that rounds to zero is flagged too (${bravo})`);
+  await shot('05-arbs-thin', { full: true });
+  check(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'the Arbs tab does not scroll sideways');
+  await page.click('[data-tab="settings"]');
+  await page.click('[data-action="set"][data-key="minMidEv"][data-v="1"]');
+
   // Line shop: open the Raiders game and log DraftKings +7.5 from the table.
   await page.click('[data-tab="games"]');
   await page.waitForSelector('.row.game');

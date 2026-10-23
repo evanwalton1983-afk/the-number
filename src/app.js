@@ -12,8 +12,9 @@ import { matchGame, gradeBet, profitOf, closeFromEspn, clvOf, chancesAtClose, su
 import { espnDate } from './espn.js';
 import { esc, money, signedPct, pct, price, units, kickoff, since, until, dayLabel, icon, recordChart } from './ui.js';
 import { sweatCode } from './handoff.js';
+import { findArbs, findMiddles, sdKey, sdOf, DEFAULT_SD } from './arbs.js';
 
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const MARKET_NAMES = { spread: 'Spread', total: 'Total', ml: 'Moneyline' };
 const SETTLED = new Set(['won', 'lost', 'push', 'void']);
 const DEFAULTS = {
@@ -38,6 +39,8 @@ const DEFAULTS = {
   passcode: '',
   sweatUrl: 'https://sweat-tracker-5a8e.netlify.app',
   theme: 'auto',
+  staleMin: 15,
+  minMidEv: 1,
 };
 
 const state = {
@@ -59,6 +62,7 @@ const state = {
   shop: { sport: '', q: '' },
   promo: { mode: 'boost', pick: {}, boost: 0.5, boostCustom: '', boostStake: 25, bonusAmount: 25, bonusBook: '', bonusMin: '', scStake: 25, scCap: 25, scRate: '' },
   record: { by: 'sport', show: 'all' },
+  arb: { mode: 'middles', total: 100 },
   sheet: null,
   saving: false,
 };
@@ -131,7 +135,7 @@ function applyTheme() {
   if (meta) meta.content = dark ? '#121920' : '#eceee8';
 }
 
-const TABS = [['edges', 'Edges', 'edges'], ['games', 'Games', 'games'], ['promos', 'Promos', 'promos'], ['record', 'Record', 'record'], ['settings', 'Settings', 'settings']];
+const TABS = [['edges', 'Edges', 'edges'], ['games', 'Games', 'games'], ['promos', 'Promos', 'promos'], ['arbs', 'Arbs', 'arbs'], ['record', 'Record', 'record'], ['settings', 'Settings', 'settings']];
 
 function route() {
   const h = location.hash.replace(/^#/, '').split('?')[0];
@@ -180,7 +184,7 @@ function renderTabs() {
 }
 
 function renderMain() {
-  const v = { edges: viewEdges, games: viewGames, promos: viewPromos, record: viewRecord, settings: viewSettings }[state.tab] || viewEdges;
+  const v = { edges: viewEdges, games: viewGames, promos: viewPromos, arbs: viewArbs, record: viewRecord, settings: viewSettings }[state.tab] || viewEdges;
   $('#main').innerHTML = v();
 }
 
@@ -247,6 +251,66 @@ function viewEdges() {
   const err = (state.scanError && list.length ? `<p class="warn">${esc(state.scanError)}</p>` : '') + stale;
   return `<section class="view">${setup}${bankrollCard()}${head}${sportChips(counts, f.sport, 'edge-sport')}${err}${body}
     <p class="foot">Fair prices come from ${state.settings.ref === 'pinnacle' ? 'Pinnacle' : 'the median of the books'} with the vig removed by the ${esc(FAIR_METHODS[state.settings.fairMethod])} method. Edge is what each dollar returns on average at the fair price.${worstGate() ? ' A price shows here when its edge clears your bar under all four ways of removing the vig (the worst case).' : ''}</p></section>`;
+}
+
+// ------------------------------------------------------------ arbs and middles
+
+// "3 min", "2 h": how old a price is.
+function ageText(ms) {
+  const m = Math.floor(ms / 60000);
+  return m < 1 ? 'under 1 min' : m < 60 ? `${m} min` : `${Math.round(m / 60)} h`;
+}
+
+function legText(x, leg) {
+  const team = (side) => nickname(x[side], x.sport);
+  const what = x.market === 'total' ? `${leg.side === 'over' ? 'Over' : 'Under'} ${leg.line}` : x.market === 'ml' ? `${team(leg.side)} to win` : `${team(leg.side)} ${fmtLine(leg.line)}`;
+  return `<span>${esc(what)} <b>${esc(price(leg.price))}</b></span><span class="bk">${esc(bookTitle(leg.book))}, ${esc(ageText(leg.age))} old</span>`;
+}
+
+function arbRowHTML(x) {
+  const sp = x.split;
+  const stakes = sp ? `${money(sp.stakeA)} and ${money(sp.stakeB)}` : 'Enter 2 dollars or more';
+  return `<li class="row edge">
+    <div class="r1"><span class="pick">${esc(MARKET_NAMES[x.market])}: ${esc(matchupOf(x))}</span><span class="px"><span class="hl">${esc(signedPct(x.roi, 2))}</span></span></div>
+    <div class="r2"><span>${esc(kickoff(x.start))}</span><span class="bk">Oldest price ${esc(ageText(x.age))}</span></div>
+    <div class="r2">${legText(x, x.legs[0])}</div><div class="r2">${legText(x, x.legs[1])}</div>
+    <dl class="r3"><div><dt>Stakes</dt><dd>${esc(stakes)}</dd></div>${sp ? `<div><dt>Payout</dt><dd>${esc(money(Math.min(sp.payA, sp.payB)))}</dd></div><div><dt>Guaranteed profit</dt><dd class="${x.thin ? 'neg' : 'ev'}">${esc(money(sp.profit, { sign: true }))}</dd></div>` : ''}</dl>
+    ${x.thin ? '<p class="warn">Whole dollar stakes leave no guaranteed profit at this total. Enter a larger total or skip it.</p>' : ''}</li>`;
+}
+
+function middleRowHTML(x) {
+  const how = x.method === 'keynum' ? 'NFL key numbers' : `Normal curve, SD ${sdOf(state.settings, x.sport, x.market)}`;
+  return `<li class="row edge">
+    <div class="r1"><span class="pick">${esc(MARKET_NAMES[x.market])} middle: ${esc(matchupOf(x))}</span><span class="px"><span class="hl">${esc(money(x.ev, { sign: true }))}</span></span></div>
+    <div class="r2"><span>${esc(kickoff(x.start))}, gap of ${esc(String(+x.gap.toFixed(1)))}</span><span class="bk">Oldest price ${esc(ageText(x.age))}</span></div>
+    <div class="r2">${legText(x, x.legs[0])}</div><div class="r2">${legText(x, x.legs[1])}</div>
+    <dl class="r3"><div><dt>In the gap</dt><dd>${esc(pct(x.chance, 1))}</dd></div><div><dt>EV per $100</dt><dd class="ev">${esc(money(x.ev, { sign: true }))}</dd></div><div><dt>If it hits</dt><dd>${esc(money(x.hit, { sign: true }))}</dd></div><div><dt>If it misses</dt><dd>${esc(money(x.miss, { sign: true }))}</dd></div></dl>
+    <span class="tag">${esc(how)}</span></li>`;
+}
+
+function viewArbs() {
+  const setup = setupCard();
+  if (setup && !state.games.length) return `<section class="view">${setup}</section>`;
+  const s = state.settings;
+  const opts = { now: now(), staleMin: Number(s.staleMin) || 0, minEv: Number(s.minMidEv) || 0, hideVA: s.hideVA, settings: s, total: num(state.arb.total) };
+  const arbs = findArbs(state.games, s.books, opts);
+  const mids = findMiddles(state.games, s.books, opts);
+  const mode = state.arb.mode;
+  const list = mode === 'arbs' ? arbs : mids;
+  const head = `<div class="viewhead"><h1>Arbs and middles</h1>
+    <div class="seg small" role="group" aria-label="Show">${[['middles', 'Middles', mids.length], ['arbs', 'Arbs', arbs.length]].map(([k, l, n]) => `<button data-action="arb-mode" data-mode="${k}" aria-pressed="${mode === k}">${l} ${n}</button>`).join('')}</div></div>`;
+  const total = mode === 'arbs' ? numField('Total to stake, dollars', 'arb.total', state.arb.total, '100', 'numeric') : '';
+  let body;
+  if (!lastScanAt()) body = '<div class="empty"><p>Scan the books to look for arbs and middles.</p><button class="btn primary" data-action="scan">Scan now</button></div>';
+  else if (!list.length) {
+    const stale = Number(s.staleMin) ? `Prices older than ${s.staleMin} min are hidden` : 'The stale setting is off';
+    body = `<div class="empty"><p>${mode === 'arbs' ? 'No arbs across your books right now.' : 'No middles above your minimum right now.'}</p>
+      <p class="note">${esc(`Your ${s.books.length} books only. ${stale}, and EV under ${money(Number(s.minMidEv) || 0)} per $100 is hidden. Change either in Settings.`)}</p></div>`;
+  } else body = `<ul class="sheetlist">${list.map(mode === 'arbs' ? arbRowHTML : middleRowHTML).join('')}</ul>`;
+  const foot = mode === 'arbs'
+    ? 'An arb is the best price on each side of one line, with the inverse decimal odds adding to under 1. Stakes are whole dollars chosen so both payouts come out as close to equal as dollars allow, and the profit shown is the smaller payout minus your total (the guaranteed minimum, a little under the ROI figure). Book rules can void a price: check both before you bet.'
+    : 'A middle wins both bets when the result lands in the gap between the two lines, and loses a little otherwise. EV is for $100 staked, $50 on each side. NFL spreads use the key number table from Gridiron; everything else uses a normal curve with the standard deviation in Settings. Price age counts from the book’s own update time.';
+  return `<section class="view">${setup}${head}${total}${body}<p class="foot">${esc(foot)}</p></section>`;
 }
 
 // ------------------------------------------------------------ games and the line shop
@@ -826,6 +890,12 @@ function viewSettings() {
       ${seg('Alert at', 'alertEdge', [[0.02, '2%'], [0.03, '3%'], [0.04, '4%'], [0.05, '5%']], s.alertEdge)}
       ${sw('sound', 'Sound')}
       ${typeof Notification !== 'undefined' && Notification.permission !== 'granted' ? '<button class="btn small" data-action="notif">Allow notifications</button>' : ''}</div>
+    <div class="card"><h2>Arbs and middles</h2>
+      ${seg('Hide prices older than', 'staleMin', [[5, '5 min'], [10, '10 min'], [15, '15 min'], [30, '30 min'], [60, '1 h'], [0, 'Never']], s.staleMin)}
+      ${seg('Smallest EV per $100 to show', 'minMidEv', [[0, '$0'], [1, '$1'], [2, '$2'], [3, '$3'], [5, '$5']], s.minMidEv)}
+      <p class="note">Applies to the Arbs tab only. Edges and the line shop are not hidden by it.</p>
+      <div class="fields">${['nfl', 'cfb', 'nba', 'ncaab'].flatMap((sp) => ['spread', 'total'].map((m) => numField(`${SPORTS[sp].short} ${m} SD`, `settings.${sdKey(sp, m)}`, s[sdKey(sp, m)] != null ? s[sdKey(sp, m)] : '', String(DEFAULT_SD[sp][m]), 'decimal'))).join('')}</div>
+      <p class="note">Standard deviation of the final margin or total, in points, for the normal curve behind a middle's chance. Blank uses the default shown. NFL spreads use the key number table instead.</p></div>
     <div class="card"><h2>Closing lines</h2>
       ${seg('Read the close from', 'closing', [['free', 'Free'], ['pinnacle', 'Pinnacle (paid plan)']], s.closing)}
       <p class="note">${s.closing === 'pinnacle' ? 'Exact Pinnacle prices at kickoff from The Odds API history: about 10 credits per kickoff time per market. Paid plans only.' : 'Free: your own scan if one ran in the last 20 minutes before kickoff, otherwise the closing line ESPN shows.'}</p></div>
@@ -1411,6 +1481,10 @@ function onInput(e) {
     if (el.tagName === 'SELECT') return renderMain();
     return rerenderKeepFocus();
   }
+  if (root === 'arb') {
+    setPath(state.arb, rest.join('.'), v);
+    return rerenderKeepFocus();
+  }
   if (root === 'shop') {
     setPath(state.shop, rest.join('.'), v);
     if (LIVE_BINDS.has(bind)) return rerenderKeepFocus();
@@ -1508,6 +1582,9 @@ async function onClick(e) {
       return closeSheet();
     case 'edge-sport':
       state.edgeFilter.sport = el.dataset.sport;
+      return renderMain();
+    case 'arb-mode':
+      state.arb.mode = el.dataset.mode === 'arbs' ? 'arbs' : 'middles';
       return renderMain();
     case 'edge-sort':
       state.edgeFilter.sort = el.dataset.sort;
